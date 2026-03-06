@@ -990,13 +990,16 @@ def ramp_endpoint_for_floor(ramp: Ramp, floor_index: int) -> Optional[Vector]:
 
 
 def can_enter_ramp_from_floor(ramp: Ramp, floor_index: int, point_xy: Vector) -> bool:
+    if floor_index != ramp.upper_floor:
+        return False
+
     endpoint = ramp_endpoint_for_floor(ramp, floor_index)
     if endpoint is None:
         return False
     _, along, lateral, _, _, length = ramp_local_coordinates(ramp, point_xy)
     half_width = 0.5 * ramp.width
     lateral_margin = max(0.15, 0.35 * ramp.width)
-    entry_depth = max(0.55, 0.55 * ramp.width)
+    entry_depth = min(length * 0.4, max(1.25, 0.9 * ramp.width))
 
     if floor_index == ramp.from_floor:
         in_along_band = -0.15 <= along <= entry_depth
@@ -1306,6 +1309,36 @@ def choose_guiding_ramp(agent: Agent, floorplan: Floorplan, field: NavigationFie
 
 def compute_navigation_force(agent: Agent, floorplan: Floorplan, field: NavigationField, cfg: AgentConfig) -> Vector:
     agent_xy = agent.pos[:2]
+
+    active_ramp = get_ramp_by_name(floorplan, agent.ramp_name)
+    if active_ramp is not None:
+        (_, upper_xy), (lower_floor, lower_xy) = get_ramp_entry_exit(active_ramp)
+        centerline_xy, along, lateral, tangent, normal, length = ramp_local_coordinates(
+            active_ramp,
+            agent_xy,
+        )
+        downhill = tangent if active_ramp.end[2] < active_ramp.start[2] else -tangent
+        if lower_floor != active_ramp.lower_floor:
+            downhill = -downhill
+
+        center_correction = centerline_xy - agent_xy
+        exit_target = lower_xy - agent_xy
+        progress = clamp(along / max(length, EPS), 0.0, 1.0)
+        half_width = max(0.5 * active_ramp.width, EPS)
+        lateral_ratio = clamp(abs(lateral) / half_width, 0.0, 1.0)
+
+        force_xy = 1.35 * cfg.ramp_gain * downhill
+        force_xy += 0.9 * cfg.ramp_gain * lateral_ratio * unit(center_correction)
+        force_xy += (0.55 + 0.35 * progress) * cfg.ramp_gain * unit(exit_target)
+
+        if norm(exit_target) < max(0.8, 0.6 * active_ramp.width):
+            nav_grid = field.navigation[active_ramp.lower_floor]
+            grad = sample_gradient(nav_grid, field.x_coords, field.y_coords, agent_xy, field.cell_size)
+            if np.all(np.isfinite(grad)) and norm(grad) > 1e-6:
+                force_xy += 0.4 * cfg.nav_gain * (-unit(grad))
+
+        return np.array([force_xy[0], force_xy[1], 0.0], dtype=float)
+
     nav_grid = field.navigation[agent.floor_index]
     grad = sample_gradient(nav_grid, field.x_coords, field.y_coords, agent_xy, field.cell_size)
     if not np.all(np.isfinite(grad)) or norm(grad) < 1e-6:
