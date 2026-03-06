@@ -972,6 +972,71 @@ def get_ramp_entry_exit(ramp: Ramp) -> Tuple[Tuple[int, Vector], Tuple[int, Vect
     return (ramp.to_floor, ramp.end[:2]), (ramp.from_floor, ramp.start[:2])
 
 
+def get_ramp_by_name(floorplan: Floorplan, ramp_name: Optional[str]) -> Optional[Ramp]:
+    if not ramp_name:
+        return None
+    for ramp in floorplan.ramps:
+        if ramp.name == ramp_name:
+            return ramp
+    return None
+
+
+def ramp_endpoint_for_floor(ramp: Ramp, floor_index: int) -> Optional[Vector]:
+    if floor_index == ramp.from_floor:
+        return ramp.start[:2].copy()
+    if floor_index == ramp.to_floor:
+        return ramp.end[:2].copy()
+    return None
+
+
+def can_enter_ramp_from_floor(ramp: Ramp, floor_index: int, point_xy: Vector) -> bool:
+    endpoint = ramp_endpoint_for_floor(ramp, floor_index)
+    if endpoint is None:
+        return False
+    _, along, lateral, _, _, length = ramp_local_coordinates(ramp, point_xy)
+    half_width = 0.5 * ramp.width
+    lateral_margin = max(0.15, 0.35 * ramp.width)
+    entry_depth = max(0.55, 0.55 * ramp.width)
+
+    if floor_index == ramp.from_floor:
+        in_along_band = -0.15 <= along <= entry_depth
+    elif floor_index == ramp.to_floor:
+        in_along_band = (length - entry_depth) <= along <= (length + 0.15)
+    else:
+        return False
+
+    in_width_band = abs(lateral) <= half_width + lateral_margin
+    return in_along_band and in_width_band and norm(point_xy - endpoint) <= max(0.9, ramp.width)
+
+
+def ramp_local_coordinates(ramp: Ramp, point_xy: Vector) -> Tuple[Vector, float, float, Vector, Vector, float]:
+    start_xy = ramp.start[:2]
+    end_xy = ramp.end[:2]
+    axis = end_xy - start_xy
+    length = max(norm(axis), EPS)
+    tangent = axis / length
+    normal = np.array([-tangent[1], tangent[0]], dtype=float)
+    rel = point_xy - start_xy
+    along = float(np.dot(rel, tangent))
+    lateral = float(np.dot(rel, normal))
+    closest_xy = start_xy + clamp(along, 0.0, length) * tangent
+    return closest_xy, along, lateral, tangent, normal, length
+
+
+def point_near_ramp(ramp: Ramp, point_xy: Vector, margin: float = 0.0) -> bool:
+    _, along, lateral, _, _, length = ramp_local_coordinates(ramp, point_xy)
+    half_width = 0.5 * ramp.width
+    return (-margin <= along <= length + margin) and (abs(lateral) <= half_width + margin)
+
+
+def clamp_point_to_ramp(ramp: Ramp, point_xy: Vector, agent_radius: float) -> Vector:
+    _, along, lateral, tangent, normal, length = ramp_local_coordinates(ramp, point_xy)
+    half_width = max(0.05, 0.5 * ramp.width - 0.55 * agent_radius)
+    along_clamped = clamp(along, 0.0, length)
+    lateral_clamped = clamp(lateral, -half_width, half_width)
+    return ramp.start[:2] + along_clamped * tangent + lateral_clamped * normal
+
+
 def ramps_for_floor(floorplan: Floorplan, floor_index: int) -> List[Ramp]:
     return [
         ramp
@@ -1164,7 +1229,11 @@ def relative_sample_on_floor(floor: Floor, placement: Dict) -> Vector:
 def support_surface_z(floorplan: Floorplan, floor_index: int, point_xy: Vector) -> Tuple[float, Optional[Ramp]]:
     candidate_ramp = None
     for ramp in ramps_for_floor(floorplan, floor_index):
-        if point_in_polygon(point_xy, ramp.polygon):
+        if point_in_polygon(point_xy, ramp.polygon) and can_enter_ramp_from_floor(
+            ramp,
+            floor_index,
+            point_xy,
+        ):
             candidate_ramp = ramp
             break
     if candidate_ramp is not None:
@@ -1275,6 +1344,34 @@ def compute_wall_force(agent: Agent, field: NavigationField, cfg: AgentConfig) -
     return np.array([direction[0], direction[1], 0.0], dtype=float) * magnitude
 
 
+def compute_ramp_edge_force(agent: Agent, floorplan: Floorplan, cfg: AgentConfig) -> Vector:
+    ramp = get_ramp_by_name(floorplan, agent.ramp_name)
+    if ramp is None:
+        for candidate in ramps_for_floor(floorplan, agent.floor_index):
+            if point_near_ramp(candidate, agent.pos[:2], margin=max(cfg.wall_range, agent.radius * 1.5)):
+                ramp = candidate
+                break
+    if ramp is None:
+        return np.zeros(3, dtype=float)
+
+    _, along, lateral, _, normal, length = ramp_local_coordinates(ramp, agent.pos[:2])
+    if along < -agent.radius or along > length + agent.radius:
+        return np.zeros(3, dtype=float)
+
+    half_width = 0.5 * ramp.width
+    distance_to_edge = half_width - abs(lateral)
+    if distance_to_edge >= cfg.wall_range:
+        return np.zeros(3, dtype=float)
+
+    sign = -1.0 if lateral >= 0.0 else 1.0
+    direction = sign * normal
+    clearance = max(distance_to_edge, 0.03)
+    magnitude = cfg.wall_strength * ((1.0 / clearance) - (1.0 / cfg.wall_range)) / max(clearance * clearance, 0.03)
+    if distance_to_edge < 0.0:
+        magnitude *= 2.5
+    return np.array([direction[0], direction[1], 0.0], dtype=float) * magnitude
+
+
 def compute_social_force(index: int, agents: Sequence[Agent], floorplan: Floorplan, cfg: AgentConfig) -> Vector:
     agent = agents[index]
     total = np.zeros(3, dtype=float)
@@ -1304,11 +1401,21 @@ def compute_agent_force(index: int, agents: Sequence[Agent], floorplan: Floorpla
     force = np.zeros(3, dtype=float)
     force += compute_navigation_force(agent, floorplan, field, cfg)
     force += compute_wall_force(agent, field, cfg)
+    force += compute_ramp_edge_force(agent, floorplan, cfg)
     force += compute_social_force(index, agents, floorplan, cfg)
     return force
 
 
 def project_agent_to_walkable(agent: Agent, floorplan: Floorplan, field: NavigationField) -> None:
+    current_ramp = get_ramp_by_name(floorplan, agent.ramp_name)
+    if current_ramp is not None and point_near_ramp(
+        current_ramp,
+        agent.pos[:2],
+        margin=max(agent.radius * 2.0, 0.2),
+    ):
+        agent.pos[:2] = clamp_point_to_ramp(current_ramp, agent.pos[:2], agent.radius)
+        return
+
     if is_xy_walkable_on_floor(floorplan, agent.floor_index, agent.pos[:2]):
         return
     snapped_xy = nearest_walkable_xy(field, agent.floor_index, agent.pos[:2])
@@ -1318,13 +1425,25 @@ def project_agent_to_walkable(agent: Agent, floorplan: Floorplan, field: Navigat
 
 def update_agent_surface(agent: Agent, floorplan: Floorplan, field: NavigationField) -> None:
     xy = agent.pos[:2]
-    ramp = None
-    for candidate in ramps_for_floor(floorplan, agent.floor_index):
-        if point_in_polygon(xy, candidate.polygon):
-            ramp = candidate
-            break
+    ramp = get_ramp_by_name(floorplan, agent.ramp_name)
+    if ramp is not None and not point_near_ramp(ramp, xy, margin=max(agent.radius * 2.0, 0.2)):
+        ramp = None
+
+    if ramp is None:
+        for candidate in ramps_for_floor(floorplan, agent.floor_index):
+            if not can_enter_ramp_from_floor(candidate, agent.floor_index, xy):
+                continue
+            if point_in_polygon(xy, candidate.polygon) or point_near_ramp(
+                candidate,
+                xy,
+                margin=max(agent.radius * 1.5, 0.15),
+            ):
+                ramp = candidate
+                break
 
     if ramp is not None:
+        agent.pos[:2] = clamp_point_to_ramp(ramp, xy, agent.radius)
+        xy = agent.pos[:2]
         agent.ramp_name = ramp.name
         high_floor = ramp.from_floor if ramp.start[2] >= ramp.end[2] else ramp.to_floor
         low_floor = ramp.to_floor if high_floor == ramp.from_floor else ramp.from_floor
@@ -1487,15 +1606,19 @@ def render_simulation(
         raise RuntimeError("vedo is required for rendering. Install project requirements first.") from exc
 
     plotter = Plotter(title=floorplan.name, size=(1280, 900))
-    plotter.show(*build_scene(floorplan), interactive=False)
+    plotter.show(*build_scene(floorplan), interactive=False, resetcam=True)
 
     center = 0.5 * (floorplan.bounds_min + floorplan.bounds_max)
-    max_dim = float(np.max(floorplan.bounds_max - floorplan.bounds_min))
+    scene_size = floorplan.bounds_max - floorplan.bounds_min
+    max_dim = float(np.max(scene_size))
     cam_pos = center + np.array([1.25, 1.2, 1.0], dtype=float) * max_dim
     plotter.camera.SetPosition(cam_pos.tolist())
     plotter.camera.SetFocalPoint(center.tolist())
     plotter.camera.SetViewUp((0, 0, 1))
     plotter.camera.SetParallelProjection(True)
+    plotter.camera.SetParallelScale(0.58 * max(scene_size[0], scene_size[1]))
+    plotter.reset_clipping_range()
+    plotter.render()
 
     sphere_actors = []
     for agent in agents:
