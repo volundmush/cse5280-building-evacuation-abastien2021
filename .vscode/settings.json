@@ -1,0 +1,9 @@
+{
+  "terminal.integrated.defaultProfile.linux": "Host Bash",
+  "terminal.integrated.profiles.linux": {
+    "Host Bash": {
+      "path": "/usr/bin/flatpak-spawn",
+      "args": ["--host", "bash"]
+    }
+  }
+}
