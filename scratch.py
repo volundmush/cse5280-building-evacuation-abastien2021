@@ -1357,10 +1357,16 @@ def compute_navigation_force(agent: Agent, floorplan: Floorplan, field: Navigati
             to_portal = lower_xy - upper_xy
             tangent = ramp_tangent_xy(ramp, toward_lower=True)
             dist_to_polygon = 0.0 if point_in_polygon(agent_xy, ramp.polygon) else norm(agent_xy - upper_xy)
-            if dist_to_polygon < max(2.0 * ramp.width, 2.5):
+            entry_target = upper_xy - agent_xy
+            if can_enter_ramp_from_floor(ramp, agent.floor_index, agent_xy):
                 centerline_at, _ = closest_point_on_segment_2d(agent_xy, ramp.start[:2], ramp.end[:2])
                 align = unit(centerline_at - agent_xy)
                 force_xy += cfg.ramp_gain * tangent + 0.6 * cfg.ramp_gain * align
+            elif dist_to_polygon < max(2.0 * ramp.width, 2.5):
+                centerline_at, _ = closest_point_on_segment_2d(agent_xy, ramp.start[:2], ramp.end[:2])
+                align = unit(centerline_at - agent_xy)
+                force_xy += 1.15 * cfg.ramp_gain * unit(entry_target)
+                force_xy += 0.35 * cfg.ramp_gain * align
             elif norm(to_portal) > EPS:
                 force_xy += 0.45 * cfg.ramp_gain * unit(upper_xy - agent_xy)
     return np.array([force_xy[0], force_xy[1], 0.0], dtype=float)
@@ -1369,21 +1375,17 @@ def compute_navigation_force(agent: Agent, floorplan: Floorplan, field: Navigati
 def compute_wall_force(agent: Agent, field: NavigationField, cfg: AgentConfig) -> Vector:
     dist_grid = field.distance_to_block[agent.floor_index]
     d = sample_scalar(dist_grid, field.x_coords, field.y_coords, agent.pos[:2])
-    if not math.isfinite(d) or d <= EPS or d >= cfg.wall_range:
+    effective_range = min(cfg.wall_range, max(0.45, 2.4 * agent.radius + 0.12))
+    if not math.isfinite(d) or d <= EPS or d >= effective_range:
         return np.zeros(3, dtype=float)
     grad_d = sample_gradient(dist_grid, field.x_coords, field.y_coords, agent.pos[:2], field.cell_size)
     direction = unit(grad_d)
-    magnitude = cfg.wall_strength * ((1.0 / max(d, 0.05)) - (1.0 / cfg.wall_range)) / max(d * d, 0.05)
+    magnitude = cfg.wall_strength * ((1.0 / max(d, 0.05)) - (1.0 / effective_range)) / max(d * d, 0.05)
     return np.array([direction[0], direction[1], 0.0], dtype=float) * magnitude
 
 
 def compute_ramp_edge_force(agent: Agent, floorplan: Floorplan, cfg: AgentConfig) -> Vector:
     ramp = get_ramp_by_name(floorplan, agent.ramp_name)
-    if ramp is None:
-        for candidate in ramps_for_floor(floorplan, agent.floor_index):
-            if point_near_ramp(candidate, agent.pos[:2], margin=max(cfg.wall_range, agent.radius * 1.5)):
-                ramp = candidate
-                break
     if ramp is None:
         return np.zeros(3, dtype=float)
 
@@ -1432,9 +1434,20 @@ def compute_agent_force(index: int, agents: Sequence[Agent], floorplan: Floorpla
     if not agent.active:
         return np.zeros(3, dtype=float)
     force = np.zeros(3, dtype=float)
-    force += compute_navigation_force(agent, floorplan, field, cfg)
-    force += compute_wall_force(agent, field, cfg)
-    force += compute_ramp_edge_force(agent, floorplan, cfg)
+    navigation_force = compute_navigation_force(agent, floorplan, field, cfg)
+    wall_force = compute_wall_force(agent, field, cfg)
+    ramp_edge_force = compute_ramp_edge_force(agent, floorplan, cfg)
+
+    nav_norm = norm(navigation_force[:2])
+    if nav_norm > EPS:
+        nav_dir = navigation_force[:2] / nav_norm
+        wall_against_nav = float(np.dot(wall_force[:2], nav_dir))
+        if wall_against_nav < 0.0:
+            wall_force[:2] -= wall_against_nav * nav_dir
+
+    force += navigation_force
+    force += wall_force
+    force += ramp_edge_force
     force += compute_social_force(index, agents, floorplan, cfg)
     return force
 
