@@ -27,8 +27,8 @@ Floorplan (data/floorplans/*.json):
     {"type": "pillar", "center": [14,8,0], "radius": 0.6, "height": 9}
   ],
   "stairs": [
-    {"min": [9,5,0], "max": [11,7,3], "target_z": 0},
-    {"min": [9,5,3], "max": [11,7,6], "target_z": 3}
+    {"start": [10,5,6.1], "end": [10,7,3.1], "width": 2.0},
+    {"start": [10,5,3.1], "end": [10,7,0.1], "width": 2.0}
   ],
   "goal": {"center": [10,0.8,0], "radius": 0.7}
 }
@@ -98,6 +98,7 @@ import argparse
 import json
 import math
 import os
+import pathlib
 import random
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -106,6 +107,7 @@ import numpy as np
 from vedo import (
     Box,
     Cylinder,
+    Line,
     Plotter,
     Points,
     Sphere,
@@ -115,6 +117,7 @@ from vedo import (
 
 Vector = np.ndarray
 
+data_folder = pathlib.Path() / "data"
 
 # ----------------------------- Data Structures -----------------------------
 
@@ -144,9 +147,9 @@ class Obstacle:
 
 @dataclass
 class Stair:
-    min: Vector
-    max: Vector
-    target_z: float
+    start: Vector
+    end: Vector
+    width: float
 
 
 @dataclass
@@ -228,7 +231,8 @@ def _vec(v) -> Vector:
 
 
 def load_floorplan(path: str) -> Floorplan:
-    with open(path, "r", encoding="utf-8") as f:
+    folder = data_folder / "floorplans"
+    with open(folder / f"{path}.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
     name = data.get("name", os.path.basename(path))
@@ -271,9 +275,9 @@ def load_floorplan(path: str) -> Floorplan:
     for st in data.get("stairs", []):
         stairs.append(
             Stair(
-                min=_vec(st["min"]),
-                max=_vec(st["max"]),
-                target_z=float(st["target_z"]),
+                start=_vec(st["start"]),
+                end=_vec(st["end"]),
+                width=float(st.get("width", 1.0)),
             )
         )
 
@@ -294,7 +298,8 @@ def load_floorplan(path: str) -> Floorplan:
 
 
 def load_scenario(path: str) -> Scenario:
-    with open(path, "r", encoding="utf-8") as f:
+    folder = data_folder / "scenarios"
+    with open(folder / f"{path}.json", "r", encoding="utf-8") as f:
         data = json.load(f)
 
     name = data.get("name", os.path.basename(path))
@@ -478,29 +483,45 @@ def floor_thickness_at(z: float, floors: List[Floor]) -> float:
     return 0.1
 
 
-def stair_target_z(pos: Vector, floorplan: Floorplan) -> Optional[float]:
-    candidates = []
-    current_floor = pos[2]
-    if floorplan.floors:
-        floor_levels = [fl.z for fl in floorplan.floors]
-        current_floor = min(floor_levels, key=lambda z: abs(z - pos[2]))
-    for st in floorplan.stairs:
-        if st.min[0] <= pos[0] <= st.max[0] and st.min[1] <= pos[1] <= st.max[1]:
-            target = st.target_z
-            if floorplan.floors:
-                floor_levels = [fl.z for fl in floorplan.floors]
-                target = min(floor_levels, key=lambda z: abs(z - target))
-            if target < current_floor - 1e-3:
-                candidates.append(target)
-    if not candidates:
+def ramp_z_for_stair(pos: Vector, stair: Stair) -> Optional[float]:
+    start = stair.start
+    end = stair.end
+    width = stair.width
+
+    dh = end - start
+    dh[2] = 0.0
+    run = norm(dh)
+    if run < 1e-6:
         return None
-    return max(candidates)
+
+    dir_xy = dh / run
+    v = pos - start
+    v[2] = 0.0
+
+    proj = float(np.dot(v, dir_xy))
+    t = proj / run
+    if t < 0.0 or t > 1.0:
+        return None
+
+    lateral = v - proj * dir_xy
+    if norm(lateral) > width * 0.5:
+        return None
+
+    return float(start[2] + t * (end[2] - start[2]))
+
+
+def ramp_z_at(pos: Vector, floorplan: Floorplan) -> Optional[float]:
+    for st in floorplan.stairs:
+        z = ramp_z_for_stair(pos, st)
+        if z is not None:
+            return z
+    return None
 
 
 def resolve_agent_z(pos: Vector, floorplan: Floorplan) -> float:
-    target = stair_target_z(pos, floorplan)
-    if target is not None:
-        return target + floor_thickness_at(target, floorplan.floors)
+    ramp_z = ramp_z_at(pos, floorplan)
+    if ramp_z is not None:
+        return ramp_z
     return assign_floor_z(pos, floorplan.floors)
 
 
@@ -573,7 +594,8 @@ def compute_force(
             )
 
     # floor repulsion: keep on current floor plane (soft)
-    if floorplan.floors and stair_target_z(agent.pos, floorplan) is None:
+    on_ramp = ramp_z_at(agent.pos, floorplan) is not None
+    if floorplan.floors and not on_ramp:
         target_z = assign_floor_z(agent.pos, floorplan.floors)
         dz = agent.pos[2] - target_z
         if abs(dz) > 1e-4:
@@ -700,11 +722,8 @@ def build_scene(floorplan: Floorplan):
 
     # stairs
     for st in floorplan.stairs:
-        center = (st.min + st.max) * 0.5
-        dims = st.max - st.min
-        sbox = Box(pos=center, length=dims[0], width=dims[1], height=dims[2])
-        sbox.c("orange").alpha(0.35)
-        actors.append(sbox)
+        ramp = Line(st.start, st.end).lw(6).c("orange").alpha(0.6)
+        actors.append(ramp)
 
     # goal
     goal = Sphere(pos=floorplan.goal.center, r=floorplan.goal.radius)
@@ -792,8 +811,8 @@ def make_example_data(root: str):
             {"type": "pillar", "center": [14, 8, 0], "radius": 0.6, "height": 9},
         ],
         "stairs": [
-            {"min": [9, 5, 0], "max": [11, 7, 3], "target_z": 0},
-            {"min": [9, 5, 3], "max": [11, 7, 6], "target_z": 3},
+            {"start": [10, 5, 6.1], "end": [10, 7, 3.1], "width": 2.0},
+            {"start": [10, 5, 3.1], "end": [10, 7, 0.1], "width": 2.0},
         ],
         "goal": {"center": [10, 0.8, 0], "radius": 0.7},
     }
