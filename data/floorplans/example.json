@@ -1,0 +1,72 @@
+{
+  "name": "Example 3-floor",
+  "bounds": {
+    "x": [0, 20],
+    "y": [0, 12],
+    "z": [0, 9]
+  },
+  "floors": [
+    {
+      "z": 0,
+      "thickness": 0.2,
+      "walkable": true
+    },
+    {
+      "z": 3,
+      "thickness": 0.2,
+      "walkable": true
+    },
+    {
+      "z": 6,
+      "thickness": 0.2,
+      "walkable": true
+    }
+  ],
+  "walls": [
+    {
+      "min": [0, 0, 0],
+      "max": [20, 0.3, 9]
+    },
+    {
+      "min": [0, 11.7, 0],
+      "max": [20, 12, 9]
+    },
+    {
+      "min": [0, 0, 0],
+      "max": [0.3, 12, 9]
+    },
+    {
+      "min": [19.7, 0, 0],
+      "max": [20, 12, 9]
+    }
+  ],
+  "obstacles": [
+    {
+      "type": "box",
+      "min": [6, 4, 0],
+      "max": [8, 6, 3]
+    },
+    {
+      "type": "pillar",
+      "center": [14, 8, 0],
+      "radius": 0.6,
+      "height": 9
+    }
+  ],
+  "stairs": [
+    {
+      "min": [9, 5, 0],
+      "max": [11, 7, 3],
+      "target_z": 0
+    },
+    {
+      "min": [9, 5, 3],
+      "max": [11, 7, 6],
+      "target_z": 3
+    }
+  ],
+  "goal": {
+    "center": [0, 6, 0],
+    "radius": 0.7
+  }
+}

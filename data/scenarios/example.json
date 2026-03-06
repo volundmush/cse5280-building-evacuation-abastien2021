@@ -1,0 +1,71 @@
+{
+  "name": "Mixed crowd",
+  "evacuees": [
+    {
+      "count": 35,
+      "spawn": {
+        "box": {
+          "min": [
+            2,
+            2,
+            0.2
+          ],
+          "max": [
+            18,
+            10,
+            2.8
+          ]
+        }
+      },
+      "repulsion": {
+        "strength": 2.5,
+        "range": 2.2,
+        "anisotropy": {
+          "enabled": true,
+          "forward_strength": 1.5,
+          "backward_strength": 0.5,
+          "forward_angle_deg": 70
+        }
+      }
+    },
+    {
+      "count": 15,
+      "spawn": {
+        "box": {
+          "min": [
+            2,
+            2,
+            3.2
+          ],
+          "max": [
+            18,
+            10,
+            5.8
+          ]
+        }
+      },
+      "repulsion": {
+        "strength": 2.0,
+        "range": 2.0,
+        "anisotropy": {
+          "enabled": false
+        }
+      }
+    }
+  ],
+  "agent": {
+    "radius": 0.25,
+    "max_speed": 1.6,
+    "goal_attraction": 3.5,
+    "wall_repulsion": 6.0,
+    "wall_range": 1.5,
+    "floor_repulsion": 6.0,
+    "floor_range": 0.7,
+    "damping": 0.7
+  },
+  "simulation": {
+    "dt": 0.05,
+    "steps": 1200,
+    "seed": 1337
+  }
+}

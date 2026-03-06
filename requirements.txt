@@ -1,0 +1,4 @@
+vedo
+numpy
+scipy
+matplotlib
