@@ -1,0 +1,83 @@
+{
+  "name": "atrium_loop_dense",
+  "simulation": {
+    "dt": 0.05,
+      "steps": 740,
+    "seed": 19
+  },
+  "agent_defaults": {
+    "radius": 0.22,
+    "max_speed": 1.32,
+    "nav_gain": 3.0,
+    "wall_strength": 5.0,
+    "wall_range": 0.98,
+    "social_strength": 1.85,
+    "social_range": 1.05,
+    "ramp_gain": 3.9,
+    "goal_gain": 2.5,
+    "damping": 0.72
+  },
+  "agents": [
+    {
+      "count": 18,
+      "floor": 2,
+      "offset_range": {"x": [-0.75, 0.72], "y": [-0.7, 0.7]},
+      "color": "cornflowerblue",
+      "repulsion": {
+        "strength": 1.85,
+        "range": 1.0,
+        "anisotropy": {
+          "enabled": true,
+          "forward_strength": 1.6,
+          "backward_strength": 0.6,
+          "forward_angle_deg": 78
+        }
+      }
+    },
+    {
+      "count": 18,
+      "floor": 1,
+      "offset_range": {"x": [-0.72, 0.68], "y": [-0.68, 0.62]},
+      "color": "indianred",
+      "repulsion": {
+        "strength": 1.55,
+        "range": 0.95,
+        "anisotropy": {"enabled": false}
+      }
+    },
+    {
+      "count": 14,
+      "floor": 0,
+      "offset_range": {"x": [-0.2, 0.75], "y": [-0.72, 0.72]},
+      "color": "goldenrod",
+      "repulsion": {
+        "strength": 1.35,
+        "range": 0.88,
+        "anisotropy": {
+          "enabled": true,
+          "forward_strength": 1.4,
+          "backward_strength": 0.75,
+          "forward_angle_deg": 72
+        }
+      }
+    }
+  ],
+  "obstacles": [
+    {
+      "type": "box",
+      "floor": 2,
+      "offset": [-0.16, -0.18],
+      "size": [1.2, 1.0],
+      "height": 1.1,
+      "color": "sienna"
+    },
+    {
+      "type": "column",
+      "floor": 0,
+      "offset": [0.0, 0.18],
+      "radius": 0.34,
+      "height": 2.6,
+      "color": "tan"
+    }
+  ]
+}

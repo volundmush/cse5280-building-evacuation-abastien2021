@@ -1,10 +1,11 @@
+#!/usr/bin/env python3
 """Gradient-descent evacuation simulator for small multi-floor buildings.
 
 The simulator builds a scalar potential field over each walkable floor surface and
 connects floors through ramps. Agents descend that field with additional
 repulsion from fixtures and other agents.
 
-Supported floorplan schema (new style)
+Supported floorplan schema
 --------------------------------------
 {
   "name": "Three story demo",
@@ -834,7 +835,7 @@ def apply_scenario_obstacles(floorplan: Floorplan, scenario: Scenario) -> None:
     for spec in scenario.obstacles:
         floorplan.fixtures.append(scenario_obstacle_to_fixture(spec, floorplan))
 
-
+# Cutoff
 def opening_contains_xy(opening: Opening, point_xy: Vector, z_value: float) -> bool:
     return (
         opening.min_corner[0] - EPS <= point_xy[0] <= opening.max_corner[0] + EPS
@@ -1666,6 +1667,18 @@ def render_simulation(
     plotter.reset_clipping_range()
     plotter.render()
 
+    def process_ui_events() -> None:
+        if offscreen:
+            return
+        interactor = getattr(plotter, "interactor", None)
+        if interactor is None:
+            interactor = getattr(plotter, "iren", None)
+        if interactor is None:
+            return
+        process_events = getattr(interactor, "ProcessEvents", None)
+        if callable(process_events):
+            process_events()
+
     sphere_actors = []
     for agent in agents:
         actor = Sphere(pos=agent.pos, r=agent.radius, c=agent.color)
@@ -1690,6 +1703,7 @@ def render_simulation(
         reached = sum(1 for agent in agents if agent.reached_goal)
         status.text(f"step {step + 1}/{scenario.simulation.steps}   active: {active}   reached: {reached}")
         plotter.render()
+        process_ui_events()
         if writer is not None:
             writer.add_frame()
 
@@ -1709,7 +1723,7 @@ def make_example_data(root: pathlib.Path) -> None:
     scenario_dir.mkdir(parents=True, exist_ok=True)
 
     floorplan = {
-        "name": "example_three_story",
+        "name": "basic_three_story",
         "grid": {"cell_size": 0.35, "padding": 1.0},
         "floors": [
             {
@@ -1776,8 +1790,8 @@ def make_example_data(root: pathlib.Path) -> None:
     }
 
     scenario = {
-        "name": "example_mixed_crowd",
-        "simulation": {"dt": 0.05, "steps": 550, "seed": 7},
+        "name": "basic_mixed_crowd",
+        "simulation": {"dt": 0.05, "steps": 699, "seed": 7},
         "agent_defaults": {
             "radius": 0.22,
             "max_speed": 1.35,
@@ -1841,12 +1855,12 @@ def make_example_data(root: pathlib.Path) -> None:
         ],
     }
 
-    with open(floorplan_dir / "example.json", "w", encoding="utf-8") as handle:
+    with open(floorplan_dir / "basic.json", "w", encoding="utf-8") as handle:
         json.dump(floorplan, handle, indent=2)
-    with open(scenario_dir / "example.json", "w", encoding="utf-8") as handle:
+    with open(scenario_dir / "basic.json", "w", encoding="utf-8") as handle:
         json.dump(scenario, handle, indent=2)
-    print(f"Wrote example floorplan to {(floorplan_dir / 'example.json').as_posix()}")
-    print(f"Wrote example scenario to {(scenario_dir / 'example.json').as_posix()}")
+    print(f"Wrote basic floorplan to {(floorplan_dir / 'basic.json').as_posix()}")
+    print(f"Wrote basic scenario to {(scenario_dir / 'basic.json').as_posix()}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1857,7 +1871,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dt", type=float, default=None, help="Override time step")
     parser.add_argument("--video", type=str, default=None, help="Output video path")
     parser.add_argument("--offscreen", action="store_true", help="Render without opening a window")
-    parser.add_argument("--make-example-data", action="store_true", help="Write example floorplan and scenario JSON files")
+    parser.add_argument("--make-example-data", action="store_true", help="Write the basic floorplan and scenario JSON files")
     return parser.parse_args()
 
 
