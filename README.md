@@ -143,10 +143,10 @@ This keeps the implementation close to the spirit of gradient descent: agents re
 
 # Scenarios:
 The four scenarios are:
-`python simulation.py --floorplan basic --scenario basic`
-`python simulation.py --floorplan atrium_loop --scenario atrium_loop`
-`python simulation.py --floorplan offset_corners --scenario offset_corners`
-`python simulation.py --floorplan four_floor_switchback --scenario four_floor_switchback`
-`python simulation.py --floorplan sublevels --scenario sublevels`
+- `python simulation.py --floorplan basic --scenario basic`
+- `python simulation.py --floorplan atrium_loop --scenario atrium_loop`
+- `python simulation.py --floorplan offset_corners --scenario offset_corners`
+- `python simulation.py --floorplan four_floor_switchback --scenario four_floor_switchback`
+- `python simulation.py --floorplan sublevels --scenario sublevels`
 
 A fourth floor variant was included to demonstrate that algorithmic pathfinding is modular. A sublevels variant shows that it works for ascending too.
