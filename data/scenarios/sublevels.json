@@ -1,0 +1,102 @@
+{
+  "name": "sublevels_mixed_flow",
+  "simulation": {
+    "dt": 0.05,
+    "steps": 1500,
+    "seed": 31
+  },
+  "agent_defaults": {
+    "radius": 0.22,
+    "max_speed": 1.34,
+    "nav_gain": 3.0,
+    "wall_strength": 5.2,
+    "wall_range": 1.0,
+    "social_strength": 1.8,
+    "social_range": 1.05,
+    "ramp_gain": 3.9,
+    "goal_gain": 2.4,
+    "damping": 0.72
+  },
+  "agents": [
+    {
+      "count": 10,
+      "floor": 4,
+      "offset_range": {"x": [-0.72, 0.68], "y": [-0.62, 0.62]},
+      "color": "royalblue",
+      "repulsion": {
+        "strength": 1.8,
+        "range": 1.0,
+        "anisotropy": {
+          "enabled": true,
+          "forward_strength": 1.6,
+          "backward_strength": 0.6,
+          "forward_angle_deg": 80
+        }
+      }
+    },
+    {
+      "count": 10,
+      "floor": 3,
+      "offset_range": {"x": [-0.65, 0.7], "y": [-0.58, 0.58]},
+      "color": "tomato",
+      "repulsion": {
+        "strength": 1.6,
+        "range": 0.95,
+        "anisotropy": {"enabled": false}
+      }
+    },
+    {
+      "count": 8,
+      "floor": 2,
+      "offset_range": {"x": [-0.7, 0.72], "y": [-0.55, 0.55]},
+      "color": "goldenrod",
+      "repulsion": {
+        "strength": 1.35,
+        "range": 0.9,
+        "anisotropy": {
+          "enabled": true,
+          "forward_strength": 1.4,
+          "backward_strength": 0.7,
+          "forward_angle_deg": 72
+        }
+      }
+    },
+    {
+      "count": 9,
+      "floor": 1,
+      "offset_range": {"x": [-0.68, 0.7], "y": [-0.6, 0.6]},
+      "color": "mediumseagreen",
+      "repulsion": {
+        "strength": 1.6,
+        "range": 0.95,
+        "anisotropy": {"enabled": false}
+      }
+    },
+    {
+      "count": 9,
+      "floor": 0,
+      "offset_range": {"x": [-0.7, 0.7], "y": [-0.6, 0.6]},
+      "color": "orchid",
+      "repulsion": {
+        "strength": 1.7,
+        "range": 1.0,
+        "anisotropy": {
+          "enabled": true,
+          "forward_strength": 1.5,
+          "backward_strength": 0.65,
+          "forward_angle_deg": 76
+        }
+      }
+    }
+  ],
+  "obstacles": [
+    {
+      "type": "box",
+      "floor": 2,
+      "offset": [0.18, -0.1],
+      "size": [1.0, 1.1],
+      "height": 1.1,
+      "color": "sienna"
+    }
+  ]
+}

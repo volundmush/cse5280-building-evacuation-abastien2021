@@ -1,0 +1,137 @@
+{
+  "name": "sublevels_five_floor",
+  "grid": {
+    "cell_size": 0.35,
+    "padding": 1.0
+  },
+  "floors": [
+    {
+      "name": "sublevel_2",
+      "z": -6.0,
+      "thickness": 0.18,
+      "polygon": [[0, 0], [18, 0], [18, 12], [0, 12]],
+      "obstacles": [
+        {
+          "type": "box",
+          "polygon": [[11.0, 4.6], [12.8, 4.6], [12.8, 6.3], [11.0, 6.3]],
+          "height": 1.1,
+          "color": "brown4"
+        }
+      ]
+    },
+    {
+      "name": "sublevel_1",
+      "z": -3.0,
+      "thickness": 0.18,
+      "polygon": [[0, 0], [18, 0], [18, 12], [0, 12]],
+      "obstacles": [
+        {
+          "type": "column",
+          "center": [6.5, 8.7],
+          "radius": 0.46,
+          "height": 2.8,
+          "color": "tan"
+        }
+      ]
+    },
+    {
+      "name": "ground",
+      "z": 0.0,
+      "thickness": 0.18,
+      "polygon": [[0, 0], [18, 0], [18, 12], [0, 12]],
+      "obstacles": [
+        {
+          "type": "box",
+          "polygon": [[7.6, 5.0], [9.5, 5.0], [9.5, 6.9], [7.6, 6.9]],
+          "height": 1.15,
+          "color": "peru"
+        }
+      ]
+    },
+    {
+      "name": "level_1",
+      "z": 3.0,
+      "thickness": 0.18,
+      "polygon": [[0, 0], [18, 0], [18, 12], [0, 12]],
+      "obstacles": [
+        {
+          "type": "column",
+          "center": [10.6, 6.6],
+          "radius": 0.44,
+          "height": 2.8,
+          "color": "tan"
+        }
+      ]
+    },
+    {
+      "name": "level_2",
+      "z": 6.0,
+      "thickness": 0.18,
+      "polygon": [[0, 0], [18, 0], [18, 12], [0, 12]],
+      "obstacles": [
+        {
+          "type": "box",
+          "polygon": [[5.2, 7.5], [7.1, 7.5], [7.1, 9.1], [5.2, 9.1]],
+          "height": 1.1,
+          "color": "brown3"
+        }
+      ]
+    }
+  ],
+  "fixtures": [
+    {"type": "wall", "polygon": [[0, 0], [18, 0], [18, 0.22], [0, 0.22]], "z": [-6.2, 9.4], "color": "slategray"},
+    {"type": "wall", "polygon": [[0, 11.78], [18, 11.78], [18, 12], [0, 12]], "z": [-6.2, 9.4], "color": "slategray"},
+    {"type": "wall", "polygon": [[0, 0], [0.22, 0], [0.22, 12], [0, 12]], "z": [-6.2, 9.4], "color": "slategray"},
+    {"type": "wall", "polygon": [[17.78, 0], [18, 0], [18, 12], [17.78, 12]], "z": [-6.2, 9.4], "color": "slategray"}
+  ],
+  "ramps": [
+    {
+      "name": "level2_to_level1",
+      "start": [16.8, 8.4, 6.09],
+      "end": [12.3, 8.4, 3.09],
+      "width": 2.0,
+      "thickness": 0.16,
+      "from_floor": 4,
+      "to_floor": 3
+    },
+    {
+      "name": "level1_to_ground",
+      "start": [4.8, 3.7, 3.09],
+      "end": [9.4, 3.7, 0.09],
+      "width": 2.0,
+      "thickness": 0.16,
+      "from_floor": 3,
+      "to_floor": 2
+    },
+    {
+      "name": "ground_to_sub1",
+      "start": [16.2, 8.9, 0.09],
+      "end": [11.4, 8.9, -2.91],
+      "width": 2.0,
+      "thickness": 0.16,
+      "from_floor": 2,
+      "to_floor": 1
+    },
+    {
+      "name": "sub1_to_sub2",
+      "start": [4.6, 3.6, -2.91],
+      "end": [9.0, 3.6, -5.91],
+      "width": 2.0,
+      "thickness": 0.16,
+      "from_floor": 1,
+      "to_floor": 0
+    }
+  ],
+  "openings": [
+    {"min": [11.8, 7.3, 5.72], "max": [17.2, 9.5, 6.45]},
+    {"min": [4.3, 2.7, 2.72], "max": [9.8, 4.7, 3.45]},
+    {"min": [11.0, 7.8, -0.3], "max": [16.7, 10.0, 0.45]},
+    {"min": [4.1, 2.7, -3.3], "max": [9.4, 4.6, -2.55]},
+    {"min": [-0.5, 5.0, -0.2], "max": [0.6, 7.0, 1.2]}
+  ],
+  "goal": {
+    "min": [-0.15, 5.2, -0.05],
+    "max": [0.7, 6.8, 1.0],
+    "color": "green4"
+  }
+}

@@ -979,13 +979,14 @@ def ramp_endpoint_for_floor(ramp: Ramp, floor_index: int) -> Optional[Vector]:
     return None
 
 
-def can_enter_ramp_from_floor(ramp: Ramp, floor_index: int, point_xy: Vector) -> bool:
-    if floor_index != ramp.upper_floor:
+def can_enter_ramp_from_floor(ramp: Ramp, goal_floor: int, floor_index: int, point_xy: Vector) -> bool:
+    travel = get_ramp_travel_for_goal(ramp, goal_floor)
+    if travel is None:
+        return False
+    entry_floor, endpoint, _, _, _ = travel
+    if floor_index != entry_floor:
         return False
 
-    endpoint = ramp_endpoint_for_floor(ramp, floor_index)
-    if endpoint is None:
-        return False
     _, along, lateral, _, _, length = ramp_local_coordinates(ramp, point_xy)
     half_width = 0.5 * ramp.width
     lateral_margin = max(0.15, 0.35 * ramp.width)
@@ -1038,20 +1039,44 @@ def ramps_for_floor(floorplan: Floorplan, floor_index: int) -> List[Ramp]:
     ]
 
 
-def descending_ramps_for_floor(floorplan: Floorplan, floor_index: int) -> List[Ramp]:
-    return [
-        ramp
-        for ramp in floorplan.ramps
-        if ramp.upper_floor == floor_index
-    ]
+def get_ramp_travel_for_goal(
+    ramp: Ramp,
+    goal_floor: int,
+) -> Optional[Tuple[int, Vector, int, Vector, Vector]]:
+    (upper_floor, upper_xy), (lower_floor, lower_xy) = get_ramp_entry_exit(ramp)
+    upper_delta = abs(upper_floor - goal_floor)
+    lower_delta = abs(lower_floor - goal_floor)
+    if upper_delta == lower_delta:
+        return None
+    if lower_delta < upper_delta:
+        tangent = unit(lower_xy - upper_xy)
+        return upper_floor, upper_xy.copy(), lower_floor, lower_xy.copy(), tangent
+    tangent = unit(upper_xy - lower_xy)
+    return lower_floor, lower_xy.copy(), upper_floor, upper_xy.copy(), tangent
 
 
-def local_target_xy_for_floor(floorplan: Floorplan, floor_index: int, point_xy: Optional[Vector] = None) -> Vector:
-    goal_floor = nearest_floor_index(floorplan.goal.center[2], floorplan.floors)
+def ramps_toward_goal_for_floor(floorplan: Floorplan, floor_index: int, goal_floor: int) -> List[Ramp]:
+    ramps: List[Ramp] = []
+    for ramp in ramps_for_floor(floorplan, floor_index):
+        travel = get_ramp_travel_for_goal(ramp, goal_floor)
+        if travel is None:
+            continue
+        entry_floor, _, _, _, _ = travel
+        if entry_floor == floor_index:
+            ramps.append(ramp)
+    return ramps
+
+
+def local_target_xy_for_floor(
+    floorplan: Floorplan,
+    floor_index: int,
+    goal_floor: int,
+    point_xy: Optional[Vector] = None,
+) -> Vector:
     if floor_index == goal_floor:
         return floorplan.goal.center[:2].copy()
 
-    ramps = descending_ramps_for_floor(floorplan, floor_index)
+    ramps = ramps_toward_goal_for_floor(floorplan, floor_index, goal_floor)
     if not ramps:
         return floorplan.goal.center[:2].copy()
 
@@ -1063,9 +1088,9 @@ def local_target_xy_for_floor(floorplan: Floorplan, floor_index: int, point_xy: 
     best_endpoint = None
     best_distance = INF
     for ramp in ramps:
-        endpoint = ramp_endpoint_for_floor(ramp, floor_index)
-        if endpoint is None:
-            continue
+        travel = get_ramp_travel_for_goal(ramp, goal_floor)
+        assert travel is not None
+        _, endpoint, _, _, _ = travel
         distance = norm(point_xy - endpoint)
         if distance < best_distance:
             best_distance = distance
@@ -1150,11 +1175,17 @@ def relative_sample_on_floor(floor: Floor, placement: Dict) -> Vector:
     return center.copy()
 
 
-def support_surface_z(floorplan: Floorplan, floor_index: int, point_xy: Vector) -> Tuple[float, Optional[Ramp]]:
+def support_surface_z(
+    floorplan: Floorplan,
+    goal_floor: int,
+    floor_index: int,
+    point_xy: Vector,
+) -> Tuple[float, Optional[Ramp]]:
     candidate_ramp = None
-    for ramp in ramps_for_floor(floorplan, floor_index):
+    for ramp in ramps_toward_goal_for_floor(floorplan, floor_index, goal_floor):
         if point_in_polygon(point_xy, ramp.polygon) and can_enter_ramp_from_floor(
             ramp,
+            goal_floor,
             floor_index,
             point_xy,
         ):
@@ -1168,7 +1199,7 @@ def support_surface_z(floorplan: Floorplan, floor_index: int, point_xy: Vector) 
 
 def resolve_spawn_position(field: NavigationField, floorplan: Floorplan, floor_index: int, point_xy: Vector, radius: float) -> Tuple[Vector, int, Optional[str]]:
     snapped_xy = nearest_walkable_xy(field, floor_index, point_xy)
-    z_value, ramp = support_surface_z(floorplan, floor_index, snapped_xy)
+    z_value, ramp = support_surface_z(floorplan, field.goal_floor, floor_index, snapped_xy)
     return np.array([snapped_xy[0], snapped_xy[1], z_value + radius], dtype=float), floor_index, None if ramp is None else ramp.name
 
 
@@ -1210,15 +1241,15 @@ def anisotropic_weight(forward_dir: Vector, direction_to_other: Vector, cfg: Rep
     return cfg.forward_strength if angle <= cfg.forward_angle_deg else cfg.backward_strength
 
 
-def choose_guiding_ramp(agent: Agent, floorplan: Floorplan) -> Optional[Ramp]:
+def choose_guiding_ramp(agent: Agent, floorplan: Floorplan, goal_floor: int) -> Optional[Ramp]:
     best_ramp = None
     best_value = INF
     agent_xy = agent.pos[:2]
-    for ramp in descending_ramps_for_floor(floorplan, agent.floor_index):
-        upper_xy = ramp_endpoint_for_floor(ramp, agent.floor_index)
-        if upper_xy is None:
-            continue
-        score = norm(agent_xy - upper_xy)
+    for ramp in ramps_toward_goal_for_floor(floorplan, agent.floor_index, goal_floor):
+        travel = get_ramp_travel_for_goal(ramp, goal_floor)
+        assert travel is not None
+        _, entry_xy, _, _, _ = travel
+        score = norm(agent_xy - entry_xy)
         if score < best_value:
             best_value = score
             best_ramp = ramp
@@ -1230,60 +1261,65 @@ def compute_navigation_force(agent: Agent, floorplan: Floorplan, field: Navigati
 
     active_ramp = get_ramp_by_name(floorplan, agent.ramp_name)
     if active_ramp is not None:
-        (_, upper_xy), (lower_floor, lower_xy) = get_ramp_entry_exit(active_ramp)
+        travel = get_ramp_travel_for_goal(active_ramp, field.goal_floor)
+        if travel is None:
+            return np.zeros(3, dtype=float)
+        entry_floor, entry_xy, exit_floor, exit_xy, travel_tangent = travel
         centerline_xy, along, lateral, tangent, normal, length = ramp_local_coordinates(
             active_ramp,
             agent_xy,
         )
-        downhill = tangent if active_ramp.end[2] < active_ramp.start[2] else -tangent
-        if lower_floor != active_ramp.lower_floor:
-            downhill = -downhill
 
         center_correction = centerline_xy - agent_xy
-        exit_target = lower_xy - agent_xy
-        progress = clamp(along / max(length, EPS), 0.0, 1.0)
+        exit_target = exit_xy - agent_xy
+        if entry_floor == active_ramp.from_floor:
+            progress = clamp(along / max(length, EPS), 0.0, 1.0)
+        else:
+            progress = clamp((length - along) / max(length, EPS), 0.0, 1.0)
         half_width = max(0.5 * active_ramp.width, EPS)
         lateral_ratio = clamp(abs(lateral) / half_width, 0.0, 1.0)
 
-        force_xy = 1.35 * cfg.ramp_gain * downhill
+        force_xy = 1.35 * cfg.ramp_gain * travel_tangent
         force_xy += 0.9 * cfg.ramp_gain * lateral_ratio * unit(center_correction)
         force_xy += (0.55 + 0.35 * progress) * cfg.ramp_gain * unit(exit_target)
 
         if norm(exit_target) < max(0.8, 0.6 * active_ramp.width):
             next_target = local_target_xy_for_floor(
                 floorplan,
-                active_ramp.lower_floor,
-                lower_xy,
+                exit_floor,
+                field.goal_floor,
+                exit_xy,
             )
             force_xy += 0.4 * cfg.nav_gain * unit(next_target - agent_xy)
 
         return np.array([force_xy[0], force_xy[1], 0.0], dtype=float)
 
-    target_xy = local_target_xy_for_floor(floorplan, agent.floor_index, agent_xy)
+    target_xy = local_target_xy_for_floor(floorplan, agent.floor_index, field.goal_floor, agent_xy)
     force_xy = cfg.nav_gain * unit(target_xy - agent_xy)
     if agent.floor_index == field.goal_floor:
         goal_pull = unit(floorplan.goal.center[:2] - agent_xy)
         force_xy += cfg.goal_gain * goal_pull
 
-    ramp = choose_guiding_ramp(agent, floorplan)
+    ramp = choose_guiding_ramp(agent, floorplan, field.goal_floor)
     if ramp is not None:
-        (upper_floor, upper_xy), (lower_floor, lower_xy) = get_ramp_entry_exit(ramp)
-        if agent.floor_index == upper_floor:
-            to_portal = lower_xy - upper_xy
-            tangent = ramp_tangent_xy(ramp, toward_lower=True)
-            dist_to_polygon = 0.0 if point_in_polygon(agent_xy, ramp.polygon) else norm(agent_xy - upper_xy)
-            entry_target = upper_xy - agent_xy
-            if can_enter_ramp_from_floor(ramp, agent.floor_index, agent_xy):
+        travel = get_ramp_travel_for_goal(ramp, field.goal_floor)
+        assert travel is not None
+        entry_floor, entry_xy, exit_floor, exit_xy, travel_tangent = travel
+        if agent.floor_index == entry_floor:
+            to_portal = exit_xy - entry_xy
+            dist_to_polygon = 0.0 if point_in_polygon(agent_xy, ramp.polygon) else norm(agent_xy - entry_xy)
+            entry_target = entry_xy - agent_xy
+            if can_enter_ramp_from_floor(ramp, field.goal_floor, agent.floor_index, agent_xy):
                 centerline_at, _ = closest_point_on_segment_2d(agent_xy, ramp.start[:2], ramp.end[:2])
                 align = unit(centerline_at - agent_xy)
-                force_xy += cfg.ramp_gain * tangent + 0.6 * cfg.ramp_gain * align
+                force_xy += cfg.ramp_gain * travel_tangent + 0.6 * cfg.ramp_gain * align
             elif dist_to_polygon < max(2.0 * ramp.width, 2.5):
                 centerline_at, _ = closest_point_on_segment_2d(agent_xy, ramp.start[:2], ramp.end[:2])
                 align = unit(centerline_at - agent_xy)
                 force_xy += 1.15 * cfg.ramp_gain * unit(entry_target)
                 force_xy += 0.35 * cfg.ramp_gain * align
             elif norm(to_portal) > EPS:
-                force_xy += 0.45 * cfg.ramp_gain * unit(upper_xy - agent_xy)
+                force_xy += 0.45 * cfg.ramp_gain * unit(entry_xy - agent_xy)
     return np.array([force_xy[0], force_xy[1], 0.0], dtype=float)
 
 
@@ -1400,8 +1436,8 @@ def update_agent_surface(agent: Agent, floorplan: Floorplan, field: NavigationFi
         ramp = None
 
     if ramp is None:
-        for candidate in ramps_for_floor(floorplan, agent.floor_index):
-            if not can_enter_ramp_from_floor(candidate, agent.floor_index, xy):
+        for candidate in ramps_toward_goal_for_floor(floorplan, agent.floor_index, field.goal_floor):
+            if not can_enter_ramp_from_floor(candidate, field.goal_floor, agent.floor_index, xy):
                 continue
             if point_in_polygon(xy, candidate.polygon) or point_near_ramp(
                 candidate,
@@ -1412,6 +1448,11 @@ def update_agent_surface(agent: Agent, floorplan: Floorplan, field: NavigationFi
                 break
 
     if ramp is not None:
+        travel = get_ramp_travel_for_goal(ramp, field.goal_floor)
+        if travel is None:
+            agent.ramp_name = None
+            return
+        _, _, exit_floor, exit_xy, _ = travel
         agent.pos[:2] = clamp_point_to_ramp(ramp, xy, agent.radius)
         xy = agent.pos[:2]
         agent.ramp_name = ramp.name
@@ -1420,8 +1461,8 @@ def update_agent_surface(agent: Agent, floorplan: Floorplan, field: NavigationFi
         _, t = closest_point_on_segment_2d(xy, ramp.start[:2], ramp.end[:2])
         agent.floor_index = high_floor if t < 0.5 else low_floor
         agent.pos[2] = ramp_height_at_xy(ramp, xy) + agent.radius
-        if norm(xy - get_ramp_entry_exit(ramp)[1][1]) <= max(ramp.width * 0.4, 0.55):
-            agent.floor_index = get_ramp_entry_exit(ramp)[1][0]
+        if norm(xy - exit_xy) <= max(ramp.width * 0.4, 0.55):
+            agent.floor_index = exit_floor
             agent.ramp_name = None
         return
 
