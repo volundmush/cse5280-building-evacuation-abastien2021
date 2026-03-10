@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Gradient-descent evacuation simulator for small multi-floor buildings.
 
-The simulator builds a scalar potential field over each walkable floor surface and
-connects floors through ramps. Agents descend that field with additional
-repulsion from fixtures and other agents.
+The simulator uses local attraction toward exits or ramp entrances, together with
+repulsion from obstacles and other agents. Ramps get special handling once an
+agent enters them, but ordinary floor navigation is purely local.
 
 Supported floorplan schema
 --------------------------------------
@@ -93,7 +93,6 @@ import os
 import pathlib
 import random
 from dataclasses import dataclass, field
-from heapq import heappop, heappush
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -268,22 +267,12 @@ class Agent:
 
 
 @dataclass
-class PortalEdge:
-    target_floor: int
-    target_y: int
-    target_x: int
-    cost: float
-
-
-@dataclass
 class NavigationField:
     cell_size: float
     x_coords: np.ndarray
     y_coords: np.ndarray
     walkable: np.ndarray
     distance_to_block: np.ndarray
-    navigation: np.ndarray
-    portal_edges: Dict[Tuple[int, int, int], List[PortalEdge]]
     goal_floor: int
     floor_lookup: Dict[int, Floor]
 
@@ -1049,6 +1038,44 @@ def ramps_for_floor(floorplan: Floorplan, floor_index: int) -> List[Ramp]:
     ]
 
 
+def descending_ramps_for_floor(floorplan: Floorplan, floor_index: int) -> List[Ramp]:
+    return [
+        ramp
+        for ramp in floorplan.ramps
+        if ramp.upper_floor == floor_index
+    ]
+
+
+def local_target_xy_for_floor(floorplan: Floorplan, floor_index: int, point_xy: Optional[Vector] = None) -> Vector:
+    goal_floor = nearest_floor_index(floorplan.goal.center[2], floorplan.floors)
+    if floor_index == goal_floor:
+        return floorplan.goal.center[:2].copy()
+
+    ramps = descending_ramps_for_floor(floorplan, floor_index)
+    if not ramps:
+        return floorplan.goal.center[:2].copy()
+
+    if point_xy is None:
+        floor = floorplan.floors[floor_index]
+        bx0, bx1, by0, by1 = floor.bbox
+        point_xy = np.array([0.5 * (bx0 + bx1), 0.5 * (by0 + by1)], dtype=float)
+
+    best_endpoint = None
+    best_distance = INF
+    for ramp in ramps:
+        endpoint = ramp_endpoint_for_floor(ramp, floor_index)
+        if endpoint is None:
+            continue
+        distance = norm(point_xy - endpoint)
+        if distance < best_distance:
+            best_distance = distance
+            best_endpoint = endpoint
+
+    if best_endpoint is None:
+        return floorplan.goal.center[:2].copy()
+    return best_endpoint.copy()
+
+
 def build_navigation_field(floorplan: Floorplan, scenario: Scenario) -> NavigationField:
     try:
         from scipy.ndimage import distance_transform_edt
@@ -1072,112 +1099,7 @@ def build_navigation_field(floorplan: Floorplan, scenario: Scenario) -> Navigati
 
     walkable = np.stack(walkable_layers, axis=0)
     distance_to_block = np.stack(distance_layers, axis=0)
-    navigation = np.full_like(distance_to_block, INF, dtype=float)
-    portal_edges: Dict[Tuple[int, int, int], List[PortalEdge]] = {}
     goal_floor = nearest_floor_index(floorplan.goal.center[2], floorplan.floors)
-
-    xx, yy = np.meshgrid(x_coords, y_coords)
-    goal_mask = (
-        walkable[goal_floor]
-        & (xx >= floorplan.goal.min_corner[0] - EPS)
-        & (xx <= floorplan.goal.max_corner[0] + EPS)
-        & (yy >= floorplan.goal.min_corner[1] - EPS)
-        & (yy <= floorplan.goal.max_corner[1] + EPS)
-    )
-    if not np.any(goal_mask):
-        nearest_goal = nearest_walkable_index(walkable[goal_floor], x_coords, y_coords, floorplan.goal.center[:2])
-        if nearest_goal is None:
-            raise RuntimeError("No walkable cells exist on the goal floor.")
-        goal_mask[nearest_goal[0], nearest_goal[1]] = True
-
-    for ramp in floorplan.ramps:
-        (upper_floor, upper_xy), (lower_floor, lower_xy) = get_ramp_entry_exit(ramp)
-        upper_nodes = []
-        lower_nodes = []
-        upper_mask = walkable[upper_floor]
-        lower_mask = walkable[lower_floor]
-        upper_idx = np.argwhere(upper_mask)
-        lower_idx = np.argwhere(lower_mask)
-        if len(upper_idx) == 0 or len(lower_idx) == 0:
-            continue
-
-        upper_xy_all = np.column_stack((x_coords[upper_idx[:, 1]], y_coords[upper_idx[:, 0]]))
-        lower_xy_all = np.column_stack((x_coords[lower_idx[:, 1]], y_coords[lower_idx[:, 0]]))
-        upper_dist = np.linalg.norm(upper_xy_all - upper_xy[None, :], axis=1)
-        lower_dist = np.linalg.norm(lower_xy_all - lower_xy[None, :], axis=1)
-        upper_keep = upper_idx[upper_dist <= max(ramp.width, 1.25)]
-        lower_keep = lower_idx[lower_dist <= max(ramp.width, 1.25)]
-        if len(upper_keep) == 0:
-            best = upper_idx[int(np.argmin(upper_dist))]
-            upper_keep = np.array([best])
-        if len(lower_keep) == 0:
-            best = lower_idx[int(np.argmin(lower_dist))]
-            lower_keep = np.array([best])
-
-        for uy, ux in upper_keep:
-            upper_nodes.append((int(uy), int(ux)))
-        for ly, lx in lower_keep:
-            lower_nodes.append((int(ly), int(lx)))
-
-        ramp_cost = max(norm(ramp.end - ramp.start), cell_size)
-        for uy, ux in upper_nodes:
-            source_key = (upper_floor, uy, ux)
-            portal_edges.setdefault(source_key, [])
-            source_xy = np.array([x_coords[ux], y_coords[uy]], dtype=float)
-            for ly, lx in lower_nodes:
-                target_xy = np.array([x_coords[lx], y_coords[ly]], dtype=float)
-                cost = ramp_cost + 0.3 * (norm(source_xy - upper_xy) + norm(target_xy - lower_xy))
-                portal_edges[source_key].append(PortalEdge(lower_floor, ly, lx, cost))
-        for ly, lx in lower_nodes:
-            source_key = (lower_floor, ly, lx)
-            portal_edges.setdefault(source_key, [])
-            source_xy = np.array([x_coords[lx], y_coords[ly]], dtype=float)
-            for uy, ux in upper_nodes:
-                target_xy = np.array([x_coords[ux], y_coords[uy]], dtype=float)
-                cost = ramp_cost + 0.3 * (norm(source_xy - lower_xy) + norm(target_xy - upper_xy))
-                portal_edges[source_key].append(PortalEdge(upper_floor, uy, ux, cost))
-
-    neighbors = [
-        (-1, -1, math.sqrt(2.0)),
-        (-1, 0, 1.0),
-        (-1, 1, math.sqrt(2.0)),
-        (0, -1, 1.0),
-        (0, 1, 1.0),
-        (1, -1, math.sqrt(2.0)),
-        (1, 0, 1.0),
-        (1, 1, math.sqrt(2.0)),
-    ]
-    pq: List[Tuple[float, Tuple[int, int, int]]] = []
-    for iy, ix in np.argwhere(goal_mask):
-        navigation[goal_floor, iy, ix] = 0.0
-        heappush(pq, (0.0, (goal_floor, int(iy), int(ix))))
-
-    ny = len(y_coords)
-    nx = len(x_coords)
-    while pq:
-        current_dist, (floor_idx, iy, ix) = heappop(pq)
-        if current_dist > navigation[floor_idx, iy, ix] + EPS:
-            continue
-
-        for dy, dx, w in neighbors:
-            jy = iy + dy
-            jx = ix + dx
-            if jy < 0 or jy >= ny or jx < 0 or jx >= nx:
-                continue
-            if not walkable[floor_idx, jy, jx]:
-                continue
-            candidate = current_dist + w * cell_size
-            if candidate + EPS < navigation[floor_idx, jy, jx]:
-                navigation[floor_idx, jy, jx] = candidate
-                heappush(pq, (candidate, (floor_idx, jy, jx)))
-
-        for edge in portal_edges.get((floor_idx, iy, ix), []):
-            if not walkable[edge.target_floor, edge.target_y, edge.target_x]:
-                continue
-            candidate = current_dist + edge.cost
-            if candidate + EPS < navigation[edge.target_floor, edge.target_y, edge.target_x]:
-                navigation[edge.target_floor, edge.target_y, edge.target_x] = candidate
-                heappush(pq, (candidate, (edge.target_floor, edge.target_y, edge.target_x)))
 
     return NavigationField(
         cell_size=cell_size,
@@ -1185,8 +1107,6 @@ def build_navigation_field(floorplan: Floorplan, scenario: Scenario) -> Navigati
         y_coords=y_coords,
         walkable=walkable,
         distance_to_block=distance_to_block,
-        navigation=navigation,
-        portal_edges=portal_edges,
         goal_floor=goal_floor,
         floor_lookup=floor_lookup,
     )
@@ -1290,18 +1210,15 @@ def anisotropic_weight(forward_dir: Vector, direction_to_other: Vector, cfg: Rep
     return cfg.forward_strength if angle <= cfg.forward_angle_deg else cfg.backward_strength
 
 
-def choose_guiding_ramp(agent: Agent, floorplan: Floorplan, field: NavigationField) -> Optional[Ramp]:
+def choose_guiding_ramp(agent: Agent, floorplan: Floorplan) -> Optional[Ramp]:
     best_ramp = None
     best_value = INF
     agent_xy = agent.pos[:2]
-    for ramp in floorplan.ramps:
-        (upper_floor, upper_xy), _ = get_ramp_entry_exit(ramp)
-        if agent.floor_index != upper_floor:
+    for ramp in descending_ramps_for_floor(floorplan, agent.floor_index):
+        upper_xy = ramp_endpoint_for_floor(ramp, agent.floor_index)
+        if upper_xy is None:
             continue
-        nav_value = sample_scalar(field.navigation[upper_floor], field.x_coords, field.y_coords, upper_xy)
-        if nav_value >= INF * 0.5:
-            continue
-        score = nav_value + 0.75 * norm(agent_xy - upper_xy)
+        score = norm(agent_xy - upper_xy)
         if score < best_value:
             best_value = score
             best_ramp = ramp
@@ -1333,25 +1250,22 @@ def compute_navigation_force(agent: Agent, floorplan: Floorplan, field: Navigati
         force_xy += (0.55 + 0.35 * progress) * cfg.ramp_gain * unit(exit_target)
 
         if norm(exit_target) < max(0.8, 0.6 * active_ramp.width):
-            nav_grid = field.navigation[active_ramp.lower_floor]
-            grad = sample_gradient(nav_grid, field.x_coords, field.y_coords, agent_xy, field.cell_size)
-            if np.all(np.isfinite(grad)) and norm(grad) > 1e-6:
-                force_xy += 0.4 * cfg.nav_gain * (-unit(grad))
+            next_target = local_target_xy_for_floor(
+                floorplan,
+                active_ramp.lower_floor,
+                lower_xy,
+            )
+            force_xy += 0.4 * cfg.nav_gain * unit(next_target - agent_xy)
 
         return np.array([force_xy[0], force_xy[1], 0.0], dtype=float)
 
-    nav_grid = field.navigation[agent.floor_index]
-    grad = sample_gradient(nav_grid, field.x_coords, field.y_coords, agent_xy, field.cell_size)
-    if not np.all(np.isfinite(grad)) or norm(grad) < 1e-6:
-        target = floorplan.goal.center[:2]
-        return cfg.nav_gain * unit(target - agent_xy)
-
-    force_xy = -cfg.nav_gain * unit(grad)
+    target_xy = local_target_xy_for_floor(floorplan, agent.floor_index, agent_xy)
+    force_xy = cfg.nav_gain * unit(target_xy - agent_xy)
     if agent.floor_index == field.goal_floor:
         goal_pull = unit(floorplan.goal.center[:2] - agent_xy)
         force_xy += cfg.goal_gain * goal_pull
 
-    ramp = choose_guiding_ramp(agent, floorplan, field)
+    ramp = choose_guiding_ramp(agent, floorplan)
     if ramp is not None:
         (upper_floor, upper_xy), (lower_floor, lower_xy) = get_ramp_entry_exit(ramp)
         if agent.floor_index == upper_floor:
@@ -1382,6 +1296,7 @@ def compute_wall_force(agent: Agent, field: NavigationField, cfg: AgentConfig) -
     grad_d = sample_gradient(dist_grid, field.x_coords, field.y_coords, agent.pos[:2], field.cell_size)
     direction = unit(grad_d)
     magnitude = cfg.wall_strength * ((1.0 / max(d, 0.05)) - (1.0 / effective_range)) / max(d * d, 0.05)
+    magnitude = min(magnitude, 1.25 * cfg.wall_strength)
     return np.array([direction[0], direction[1], 0.0], dtype=float) * magnitude
 
 
@@ -1440,14 +1355,22 @@ def compute_agent_force(index: int, agents: Sequence[Agent], floorplan: Floorpla
     ramp_edge_force = compute_ramp_edge_force(agent, floorplan, cfg)
 
     nav_norm = norm(navigation_force[:2])
+    wall_follow = np.zeros(3, dtype=float)
     if nav_norm > EPS:
         nav_dir = navigation_force[:2] / nav_norm
         wall_against_nav = float(np.dot(wall_force[:2], nav_dir))
         if wall_against_nav < 0.0:
+            wall_dir = unit(wall_force[:2])
+            if norm(wall_dir) > EPS:
+                tangent_a = np.array([-wall_dir[1], wall_dir[0]], dtype=float)
+                tangent_b = -tangent_a
+                chosen_tangent = tangent_a if float(np.dot(tangent_a, nav_dir)) >= float(np.dot(tangent_b, nav_dir)) else tangent_b
+                wall_follow[:2] = 0.9 * min(abs(wall_against_nav), 2.0 * cfg.wall_strength) * chosen_tangent
             wall_force[:2] -= wall_against_nav * nav_dir
 
     force += navigation_force
     force += wall_force
+    force += wall_follow
     force += ramp_edge_force
     force += compute_social_force(index, agents, floorplan, cfg)
     return force
